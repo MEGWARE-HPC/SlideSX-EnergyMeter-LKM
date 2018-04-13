@@ -18,11 +18,12 @@
 #include <linux/platform_device.h>
 #include <linux/usb.h>
 #include <linux/kobject.h>
+#include <linux/semaphore.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("MEGWARE Computer Vertrieb und Service GmbH");
 MODULE_DESCRIPTION("Driver for the MEGWARE SlideSX USB Energy Meter");
-MODULE_VERSION("1.0");
+MODULE_VERSION("1.1");
 
 /* character device */
 #define ENERGYMETER_FIRST_MINOR 0

@@ -1,12 +1,18 @@
 %define debug_packages %{nil}
 %define debug_package %{nil}
 
-%define kernel %(uname -r)
+
+%if 0%{?kernelvers:1}
+	%define kernel %{kernelvers}
+%else
+	%define kernel %(uname -r)
+%endif
+
 %define destdir /lib/modules/%{kernel}
 
 Name:		slidesx-energymeter
-Version:	1.0
-Release:	1%{?dist}
+Version:	1.1
+Release:	%(echo %{kernel} | tr '-' '_')
 Summary:	Provides the driver for the MEGWARE SlideSX USB Energy Meter
 
 License:	GPL
@@ -38,6 +44,10 @@ echo "slidesx-energymeter" >> $RPM_BUILD_ROOT/etc/modules-load.d/slidesx-energym
 depmod -ae %{kernel}
 
 %changelog
+* Tue Apr 12 2018 Sebastian Siegert <sebastian.siegert@megware.com>
+- added locking mechanism to prevent problems during concurrent reads
+* Thu Aug 31 2017 Steve Graf <steve.graf@megware.com>
+- Adding version number and kernel version to rpm name (and posibility to define the build kernel)
 * Thu Feb 23 2017 Sebastian Siegert <sebastian.siegert@megware.com>
 - Initial Release
 
