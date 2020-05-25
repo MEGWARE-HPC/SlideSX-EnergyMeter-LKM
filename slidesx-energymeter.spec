@@ -11,7 +11,7 @@
 %define destdir /lib/modules/%{kernel}
 
 Name:		slidesx-energymeter
-Version:	1.1
+Version:	1.2
 Release:	%(echo %{kernel} | tr '-' '_')
 Summary:	Provides the driver for the MEGWARE SlideSX USB Energy Meter
 
@@ -44,8 +44,10 @@ echo "slidesx-energymeter" >> $RPM_BUILD_ROOT/etc/modules-load.d/slidesx-energym
 depmod -ae %{kernel}
 
 %changelog
+* Mon Apr 13 2020 Axel Auweter <axel.auweter@megware.com>
+- Support for multiple EnergyMeter devices in one node
 * Tue Apr 12 2018 Sebastian Siegert <sebastian.siegert@megware.com>
-- added locking mechanism to prevent problems during concurrent reads
+- Added locking mechanism to prevent problems during concurrent reads
 * Thu Aug 31 2017 Steve Graf <steve.graf@megware.com>
 - Adding version number and kernel version to rpm name (and posibility to define the build kernel)
 * Thu Feb 23 2017 Sebastian Siegert <sebastian.siegert@megware.com>

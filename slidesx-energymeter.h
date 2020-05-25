@@ -23,7 +23,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("MEGWARE Computer Vertrieb und Service GmbH");
 MODULE_DESCRIPTION("Driver for the MEGWARE SlideSX USB Energy Meter");
-MODULE_VERSION("1.1");
+MODULE_VERSION("1.2");
 
 /* character device */
 #define ENERGYMETER_FIRST_MINOR 0
@@ -44,15 +44,21 @@ MODULE_VERSION("1.1");
 struct usb_energymeter_handle {
 	struct usb_device     *usb_dev;
 	struct usb_interface  *usb_iface;
+	struct device         *hwmon_dev;
+	struct platform_device *pdevice;
 
 	__u8                  endpnt_bulk_out_addr;
 	__u8                  endpnt_bulk_in_addr;
+
+	struct kref           kref;
 
 	unsigned char         *bulk_out_buff;
 	unsigned char         *bulk_in_buff;
 	size_t                bulk_out_buff_size;
 	size_t                bulk_in_buff_size;
 };
+
+#define to_energymeter_dev(d) container_of(d, struct usb_energymeter_handle, kref)
 
 /* define modules init and exit functions */
 static int energymeter_init(void);

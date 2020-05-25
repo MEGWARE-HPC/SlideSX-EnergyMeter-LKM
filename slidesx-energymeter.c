@@ -23,13 +23,11 @@ static struct usb_device_id devices_table[] = {
 MODULE_DEVICE_TABLE (usb, devices_table);
 
 static struct usb_driver energymeter_usb = {
-	.name       = "slidesx-energymeter",
+	.name       = "slidesx-em",
 	.id_table   = devices_table,
 	.probe      = energymeter_probe,
 	.disconnect = energymeter_disconnect,
 };
-
-struct usb_energymeter_handle *devctx;
 
 static dev_t energymeter_dev;
 
@@ -47,7 +45,7 @@ static struct file_operations energymeter_fops =
 };
 
 static struct usb_class_driver energymeter_usb_class = {
-	.name       = "usb/slidesx-energymeter",
+	.name       = "usb/slidesx-em%d",
 	.fops       = &energymeter_fops,
 	.minor_base = USB_MINOR_BASE,
 };
@@ -68,12 +66,6 @@ static struct attribute *energymeter_attrs[] = {
 };
 ATTRIBUTE_GROUPS(energymeter);
 
-/* hwmon device */
-static struct device *hwmon_dev;
-
-/* platform device */
-static struct platform_device *energymeter_pdevice;
-
 /* Spinlock for read operation */
 static DEFINE_SPINLOCK(read_lock);
 
@@ -82,8 +74,9 @@ static DEFINE_SPINLOCK(read_lock);
  *         FUNCTIONS
  * ========================= */
 
-void _free_usb_energymeter_handle(void)
+void _free_usb_energymeter_handle(struct kref *kref)
 {
+	struct usb_energymeter_handle *devctx = to_energymeter_dev(kref);
 	if (devctx)
         {
                 usb_put_dev(devctx->usb_dev);
@@ -104,9 +97,15 @@ void _free_usb_energymeter_handle(void)
 static ssize_t energymeter_get_reading(struct device *dev, struct device_attribute *da, char *buf)
 {
 	struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
+	struct usb_energymeter_handle *devctx = dev_get_drvdata(dev);
 	int transmitted;
 	uint64_t result;
 	unsigned char *ptr = (unsigned char *) &result;
+
+	if (devctx == NULL) {
+		printk(KERN_ERR "SlideSX Energymeter devctx = NULL!\n");
+		return 0;
+	}
 
 	/* prevent concurrency problems */
 	spin_lock(&read_lock);
@@ -169,6 +168,7 @@ static ssize_t energymeter_get_reading(struct device *dev, struct device_attribu
 
 static int energymeter_probe(struct usb_interface *interface, const struct usb_device_id *id)
 {
+	struct usb_energymeter_handle *devctx = NULL;
 	int retval = -ENOMEM;
 	int i;
 	struct usb_host_interface *host_if;
@@ -181,6 +181,8 @@ static int energymeter_probe(struct usb_interface *interface, const struct usb_d
 		printk(KERN_ERR "SlideSX Energymeter driver runs out of memory\n");
 		return -ENOMEM;
 	}
+
+	kref_init(&devctx->kref);
 
 	/* get / set the device and interface structure */
 	devctx->usb_dev = usb_get_dev(interface_to_usbdev(interface));
@@ -241,7 +243,7 @@ static int energymeter_probe(struct usb_interface *interface, const struct usb_d
 		goto ERROR;
 	}
 
-	/* usb driver needs to retrieve the local data structure late in lifecycle */
+	/* usb driver needs to retrieve the local data structure later in lifecycle */
 	usb_set_intfdata(interface, devctx);
 
 	/* register device now since it is ready for operation */
@@ -254,27 +256,28 @@ static int energymeter_probe(struct usb_interface *interface, const struct usb_d
 	}
 
 	/* register with hwmon to create sysfs files */
-	hwmon_dev = devm_hwmon_device_register_with_groups(&devctx->usb_dev->dev, "sem", devctx, energymeter_groups);
-	if (PTR_ERR_OR_ZERO(hwmon_dev))
+	devctx->hwmon_dev = devm_hwmon_device_register_with_groups(&devctx->usb_dev->dev, "sem", devctx, energymeter_groups);
+	if (PTR_ERR_OR_ZERO(devctx->hwmon_dev))
 	{
 		printk(KERN_ERR "SlideSX Energymeter could not register the hwmon device\n");
 		usb_set_intfdata(interface, NULL);
-		retval = PTR_ERR_OR_ZERO(hwmon_dev);
+		retval = PTR_ERR_OR_ZERO(devctx->hwmon_dev);
 		goto ERROR;
-	} 
+	}
 	
-	/* register as platform device */
-	energymeter_pdevice = platform_device_register_simple("sem", -1, NULL, 0);
-	if (energymeter_pdevice == NULL)
+	/* register as platform device and reference our local data structure in there */
+	devctx->pdevice = platform_device_register_simple("sem", devctx->usb_dev->portnum, NULL, 0);
+	if (devctx->pdevice == NULL)
 	{
 		printk(KERN_ERR "SlideSX Energymeter could not allocate a platform device\n");
 		usb_set_intfdata(interface, NULL);
 		retval = -1;
 		goto ERROR;
-	}	
+	}
+	dev_set_drvdata(&devctx->pdevice->dev, devctx);
 
 	/* create the hwmon sensor files in /sys/devices/platform/... */
-	retval = device_create_file(&energymeter_pdevice->dev, &sensor_dev_attr_power_mw.dev_attr);
+	retval = device_create_file(&devctx->pdevice->dev, &sensor_dev_attr_power_mw.dev_attr);
 	if (retval)
 	{
 		printk(KERN_ERR "SlideSX Energymeter could not create new file %s\n", sensor_dev_attr_power_mw.dev_attr.attr.name);
@@ -282,7 +285,7 @@ static int energymeter_probe(struct usb_interface *interface, const struct usb_d
 		goto ERROR;
 	}
 	
-	retval = device_create_file(&energymeter_pdevice->dev, &sensor_dev_attr_energy_j.dev_attr);
+	retval = device_create_file(&devctx->pdevice->dev, &sensor_dev_attr_energy_j.dev_attr);
 	if (retval)
 	{
 		printk(KERN_ERR "SlideSX Energymeter could not create new file %s\n", sensor_dev_attr_energy_j.dev_attr.attr.name);
@@ -290,7 +293,7 @@ static int energymeter_probe(struct usb_interface *interface, const struct usb_d
 		goto ERROR;
 	}
 
-	retval = device_create_file(&energymeter_pdevice->dev, &sensor_dev_attr_voltage_mv.dev_attr);
+	retval = device_create_file(&devctx->pdevice->dev, &sensor_dev_attr_voltage_mv.dev_attr);
 	if (retval)
 	{
 		printk(KERN_ERR "SlideSX Energymeter could not create new file %s\n", sensor_dev_attr_voltage_mv.dev_attr.attr.name);
@@ -298,7 +301,7 @@ static int energymeter_probe(struct usb_interface *interface, const struct usb_d
 		goto ERROR;
 	}
 
-	retval = device_create_file(&energymeter_pdevice->dev, &sensor_dev_attr_current_ma.dev_attr);
+	retval = device_create_file(&devctx->pdevice->dev, &sensor_dev_attr_current_ma.dev_attr);
 	if (retval)
 	{
 		printk(KERN_ERR "SlideSX Energymeter could not create new file %s\n", sensor_dev_attr_current_ma.dev_attr.attr.name);
@@ -309,22 +312,24 @@ static int energymeter_probe(struct usb_interface *interface, const struct usb_d
 	return 0;
 
 ERROR:
-	_free_usb_energymeter_handle();
+	kref_put(&devctx->kref, _free_usb_energymeter_handle);
 	return retval;
 }
 
 static void energymeter_disconnect(struct usb_interface *interface)
 {
+	struct usb_energymeter_handle *devctx = usb_get_intfdata(interface);
+
 	/* unregister platform driver */
-	if (energymeter_pdevice != NULL)
+	if (devctx->pdevice != NULL)
 	{
-		platform_device_unregister(energymeter_pdevice);
+		platform_device_unregister(devctx->pdevice);
 	}
 
 	/* unregister hwmon device */
-	if (hwmon_dev != NULL)
+	if (devctx->hwmon_dev != NULL)
 	{
-		device_unregister(hwmon_dev);
+		device_unregister(devctx->hwmon_dev);
 	}
 
 	/* reset the data structure */	
@@ -334,7 +339,7 @@ static void energymeter_disconnect(struct usb_interface *interface)
 	usb_deregister_dev(interface, &energymeter_usb_class);
 
 	printk(KERN_ALERT "SlideSX Energymeter has been disconnect from the host\n");
-	_free_usb_energymeter_handle();
+	kref_put(&devctx->kref, _free_usb_energymeter_handle);
 }
 
 static int energymeter_init(void)
@@ -347,7 +352,7 @@ static int energymeter_init(void)
 
 	/*  create the character device   */
 	/* allocate major + minor numbers */
-	if ((retval = alloc_chrdev_region(&energymeter_dev, ENERGYMETER_FIRST_MINOR , ENERGYMETER_MINOR_COUNT, "slidesx-energymeter")) < 0)
+	if ((retval = alloc_chrdev_region(&energymeter_dev, ENERGYMETER_FIRST_MINOR , ENERGYMETER_MINOR_COUNT, "slidesx-em")) < 0)
 	{
 		printk(KERN_ERR "SlideSX Energymeter failed to get major and minor numbers\n");
 		return retval;
@@ -372,7 +377,7 @@ static int energymeter_init(void)
 		return PTR_ERR(energymeter_class);
 	}
 
-	if (IS_ERR(err_device = device_create(energymeter_class, NULL, energymeter_dev, NULL, "slidesx-energymeter")))
+	if (IS_ERR(err_device = device_create(energymeter_class, NULL, energymeter_dev, NULL, "slidesx-em")))
 	{
 		printk(KERN_ERR "SlideSX Energymeter failed to create device\n");
 		class_destroy(energymeter_class);
