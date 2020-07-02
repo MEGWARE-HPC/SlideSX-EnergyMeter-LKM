@@ -66,8 +66,8 @@ static struct attribute *energymeter_attrs[] = {
 };
 ATTRIBUTE_GROUPS(energymeter);
 
-/* Spinlock for read operation */
-static DEFINE_SPINLOCK(read_lock);
+/* Mutex for read operation */
+static DEFINE_MUTEX(read_lock);
 
 
 /* =========================
@@ -108,7 +108,7 @@ static ssize_t energymeter_get_reading(struct device *dev, struct device_attribu
 	}
 
 	/* prevent concurrency problems */
-	spin_lock(&read_lock);
+	mutex_lock(&read_lock);
 
 	/* send the command to the energymeter      */
 	/* attr->index contains the desired command */
@@ -117,7 +117,7 @@ static ssize_t energymeter_get_reading(struct device *dev, struct device_attribu
 
 	if (usb_bulk_msg(devctx->usb_dev, usb_sndbulkpipe(devctx->usb_dev, devctx->endpnt_bulk_out_addr), devctx->bulk_out_buff, 1, &transmitted, 0) != 0)
 	{
-		spin_unlock(&read_lock);
+		mutex_unlock(&read_lock);
 		printk(KERN_ERR "SlideSX Energymeter could not send command to usb device\n");
 		return 0;
 	}	
@@ -127,7 +127,7 @@ static ssize_t energymeter_get_reading(struct device *dev, struct device_attribu
 		memset(devctx->bulk_in_buff, 0, devctx->bulk_in_buff_size);
 		if (usb_bulk_msg(devctx->usb_dev, usb_rcvbulkpipe(devctx->usb_dev, devctx->endpnt_bulk_in_addr), devctx->bulk_in_buff, devctx->bulk_in_buff_size, &transmitted, 0) != 0)
 		{
-			spin_unlock(&read_lock);
+			mutex_unlock(&read_lock);
 			printk(KERN_ERR "SlideSX Energymeter could not receive data from usb device\n");
 			return 0;
 		}
@@ -145,23 +145,23 @@ static ssize_t energymeter_get_reading(struct device *dev, struct device_attribu
 				ptr[5] = devctx->bulk_in_buff[7];
 				ptr[6] = devctx->bulk_in_buff[8];
 				ptr[7] = devctx->bulk_in_buff[9];
-				spin_unlock(&read_lock);
+				mutex_unlock(&read_lock);
 				return snprintf(buf, PAGE_SIZE, "%llu\n",  result);
 			} else
 			{
-				spin_unlock(&read_lock);
+				mutex_unlock(&read_lock);
 				printk(KERN_ERR "SlideSX Energymeter received a message indicating an error\n");
 				return 0;
 			}
 		} else
 		{
-			spin_unlock(&read_lock);
+			mutex_unlock(&read_lock);
 			printk(KERN_ERR "SlideSX Energymeter received a wrong message\n");
 			return 0;
 		}
 	} else
 	{
-		spin_unlock(&read_lock);
+		mutex_unlock(&read_lock);
 		return 0;
 	}
 }
